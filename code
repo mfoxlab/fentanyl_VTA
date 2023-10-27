@@ -1,0 +1,702 @@
+#Here we use Day lab code to integrate their data.
+
+library(Seurat)
+library(data.table)
+
+set.seed(1234)
+samples=c("F1","F2","M1","M2")
+
+analysisDir="/local/projects-t3/idea/mbasu/viralseq/analysis/dayonly"
+
+
+########VTA###########
+Fem1_data  <- Read10X(data.dir = "/local/projects-t3/idea/mbasu/viralseq/analysis/day/GSE168156_RAW/F1/")
+Fem2_data  <- Read10X(data.dir = "/local/projects-t3/idea/mbasu/viralseq/analysis/day/GSE168156_RAW/F2/")
+Male1_data <- Read10X(data.dir = "/local/projects-t3/idea/mbasu/viralseq/analysis/day/GSE168156_RAW/M1/")
+Male2_data <- Read10X(data.dir = "/local/projects-t3/idea/mbasu/viralseq/analysis/day/GSE168156_RAW/M2/")
+
+
+
+#Create the Seurat object 
+#Using arbitrary cutoffs here. This allows us to interrogate the quality of every cell, while reserving the right to remove some at 
+#a later QC point. 
+Fem1  <- CreateSeuratObject(counts = Fem1_data,min.cells = 1,min.features = 1) #5873 nuclei
+Fem2  <- CreateSeuratObject(counts = Fem2_data,min.cells = 1,min.features = 1) #5150 nuclei
+Male1 <- CreateSeuratObject(counts = Male1_data,min.cells = 1,min.features = 1) #3628 nuclei 
+Male2 <- CreateSeuratObject(counts = Male2_data,min.cells = 1,min.features = 1) #6955 nuclei 
+#21606
+
+#Create the Seurat object 
+#Using arbitrary cutoffs here. This allows us to interrogate the quality of every cell, while reserving the right to remove some at 
+#a later QC point. 
+Fem1  <- CreateSeuratObject(counts = Fem1_data,min.cells = 1,min.features = 1) #5873 nuclei
+Fem2  <- CreateSeuratObject(counts = Fem2_data,min.cells = 1,min.features = 1) #5150 nuclei
+Male1 <- CreateSeuratObject(counts = Male1_data,min.cells = 1,min.features = 1) #3628 nuclei 
+Male2 <- CreateSeuratObject(counts = Male2_data,min.cells = 1,min.features = 1) #6955 nuclei 
+#21606
+
+#Identify the percentage of reads mapping to mitochondrial genes 
+Fem1  <- PercentageFeatureSet(Fem1, pattern = "^Mt-", col.name = "percent_mito")
+Fem2  <- PercentageFeatureSet(Fem2, pattern = "^Mt-", col.name = "percent_mito")
+Male1 <- PercentageFeatureSet(Male1, pattern = "^Mt-", col.name = "percent_mito")
+Male2 <- PercentageFeatureSet(Male2, pattern = "^Mt-", col.name = "percent_mito")
+
+#VlnPlots to visualize QC metrics
+pdf(file=paste(analysisDir,"/QC.pdf",sep=''))
+VlnPlot(Fem1, features = c("nFeature_RNA", "nCount_RNA", "percent_mito"), ncol = 3,pt.size = 0)
+VlnPlot(Fem2, features = c("nFeature_RNA", "nCount_RNA", "percent_mito"), ncol = 3,pt.size = 0)
+VlnPlot(Male1, features = c("nFeature_RNA", "nCount_RNA", "percent_mito"), ncol = 3,pt.size = 0)
+VlnPlot(Male2, features = c("nFeature_RNA", "nCount_RNA", "percent_mito"), ncol = 3,pt.size = 0)
+dev.off()
+
+#Subset data to have greater than 200 features and less than 5% of reads mapping to mitochondrial genes 
+Fem1  <- subset(x = Fem1, subset  =  nFeature_RNA > 200 & percent_mito < 5) #5871 nuclei 
+Fem2  <- subset(x = Fem2, subset  =  nFeature_RNA > 200 & percent_mito < 5) #5150 nuclei 
+Male1 <- subset(x = Male1, subset =  nFeature_RNA > 200 & percent_mito < 5) #3628 nuclei 
+Male2 <- subset(x = Male2, subset =  nFeature_RNA > 200 & percent_mito < 5) #6951 nuclei
+#21600
+
+#Log Normalize the data
+Fem1  <- NormalizeData(Fem1, normalization.method = "LogNormalize", scale.factor = 10000)
+Fem2  <- NormalizeData(Fem2, normalization.method = "LogNormalize", scale.factor = 10000)
+Male1 <- NormalizeData(Male1, normalization.method = "LogNormalize", scale.factor = 10000)
+Male2 <- NormalizeData(Male2, normalization.method = "LogNormalize", scale.factor = 10000)
+
+
+#Find variable features
+Fem1  <- FindVariableFeatures(Fem1, selection.method = "vst", nfeatures = 2000)
+Fem2  <- FindVariableFeatures(Fem2, selection.method = "vst", nfeatures = 2000)
+Male1 <- FindVariableFeatures(Male1, selection.method = "vst", nfeatures = 2000)
+Male2 <- FindVariableFeatures(Male2, selection.method = "vst", nfeatures = 2000)
+
+#Add Metadata attributes
+Fem1$GEM_Well  <- "Fem1"
+Fem2$GEM_Well  <- "Fem2"
+Male1$GEM_Well <- "Male1"
+Male2$GEM_Well <- "Male2"
+
+Fem1$Sex   <- "Female"
+Fem2$Sex   <- "Female"
+Male1$Sex  <- "Male"
+Male2$Sex  <- "Male"
+
+#Integrate the data
+VTA_adult <- FindIntegrationAnchors(object.list = list(Fem1,Fem2,Male1,Male2), dims = 1:25)
+VTA_adult  <- IntegrateData(anchorset = VTA_adult,dims = 1:25)
+
+#Change the default assay
+DefaultAssay(VTA_adult) <- "integrated"
+
+# Run the standard workflow for visualization and clustering
+VTA_adult <- ScaleData(VTA_adult,verbose = FALSE)
+VTA_adult <- RunPCA(VTA_adult,npcs = 25,verbose = FALSE) #Compute 50 npcs by default
+# Dimensionality reduction and Clustering
+VTA_adult <- RunUMAP(VTA_adult, reduction = "pca", dims = 1:25)
+VTA_adult <- FindNeighbors(VTA_adult, reduction = "pca", dims = 1:25)
+VTA_adult <- FindClusters(VTA_adult, resolution = 0.2)
+#Rename the identities
+
+VTA_adult <- RenameIdents(object = VTA_adult,
+                          "0" = "Olig-1",
+                          "1" = "Olig-2",
+                          "2" = "Glut-Neuron-1",
+                          "3" = "Astrocyte",
+                          "4" = "Polydendrocyte",
+                          "5" = "Microglia",
+                          "6" = "GABA-Neuron-1",
+                          "7" = "Glut-Neuron-2",
+                          "8" = "Interneuron-1",
+                          "9" = "DA-Neuron",
+                          "10"= "GABA-Neuron-2",
+                          "11"= "OPC-Olig-1",
+                          "12"= "OPC-Olig-2", 
+                          "13"= "Glut-Neuron-3",
+                          "14"= "Mural",
+                          "15"= "Endothelial")
+
+save(VTA_adult,file=paste0(analysisDir,"/DayonlyIntegrated.rda"),compress=TRUE)
+
+
+#Make a celltype column
+VTA_adult$CellType <- Idents(VTA_adult)
+
+#Plot the UMAP
+pdf(file=paste(analysisDir,"/MajCluster.pdf",sep=''))
+DimPlot(object = VTA_adult,reduction = "umap",label = TRUE,repel = TRUE) + NoLegend()
+dev.off()
+
+#Here we Integrate Day and Fox data and then do the clustering and reclustering of the neurons
+
+library(Seurat)
+library(data.table)
+library(BiocGenerics)
+library(SingleCellExperiment)
+library(scDblFinder)
+library(ggplot2)
+library(patchwork)
+
+dataDir = "/local/projects-t3/idea/mbasu/viralseq/cellrangeroutput/"
+analysisDir="/local/projects-t3/idea/mbasu/viralseq/analysis/day"
+
+source("/local/projects-t3/idea/mbasu/viralseq/stackedvlnplot.r")
+source("/local/projects-t3/idea/mbasu/viralseq/Barpolt.r")
+
+#Import raw Day Lab Data
+samples=c("F1","F2","M1","M2")
+RawDat = vector(mode='list',length=length(samples))
+names(RawDat) = samples
+
+for(i in samples){ print(i);
+RawDat[[i]] <- Read10X(data.dir = paste("/local/projects-t3/idea/mbasu/viralseq/analysis/day/GSE168156_RAW",i,sep="/")) 
+}
+
+AllDat = vector(mode='list',length=length(samples))
+names(AllDat) = samples
+NormDat = vector(mode='list',length=length(samples))
+names(NormDat) = samples
+
+setwd(analysisDir)
+
+#sample_list =fread(file=paste0(analysisDir,"/meta.txt"),sep="\t")
+#sample_Meta = sample_list[match(samples,sample_list$samples),]
+#Name = as.character(sample_Meta$"samples")
+
+CellTracking = data.frame(sample=samples,Raw=0,AfterCutoffs=0,AfterDoublets=0)
+rownames(CellTracking) = samples
+
+for(i in samples){ cat(paste(i,', ',sep=''))
+
+AllDat[[i]] <- CreateSeuratObject(counts = RawDat[[i]])
+CellTracking[i,'Raw'] = ncol(AllDat[[i]])
+AllDat[[i]]@meta.data$sample=i
+
+if(i == samples[1]){cell=colnames(AllDat[[i]])}
+cell.x=colnames(AllDat[[i]]);
+
+#Filter data
+AllDat[[i]] <- PercentageFeatureSet(AllDat[[i]], pattern = "^mt-", col.name = "percent.mt")
+AllDat[[i]]@meta.data$Region = "rat_VTA"
+AllDat[[i]]@meta.data$Sex = ifelse(substr(i,1,1)=="F","Female","Male")
+NormDat[[i]] = subset(AllDat[[i]], subset = nFeature_RNA > 200 & nFeature_RNA < 15000 & nCount_RNA > 500& nCount_RNA < 25000 & percent.mt < 10)
+CellTracking[i,'AfterCutoffs'] = ncol(NormDat[[i]])
+NormDat[[i]] <- SCTransform(NormDat[[i]], verbose = FALSE)
+NormDat[[i]] <- RunPCA(NormDat[[i]], verbose = FALSE)
+NormDat[[i]] <- RunUMAP(NormDat[[i]], dims = 1:50, verbose = FALSE)
+NormDat[[i]] <- FindNeighbors(NormDat[[i]], dims = 1:50, verbose = FALSE)
+NormDat[[i]] <- FindClusters(NormDat[[i]], verbose = FALSE, resolution=0.5)
+DefaultAssay(NormDat[[i]]) = 'RNA'
+
+## doublet id and removal -  
+DefaultAssay(NormDat[[i]]) = 'SCT'
+TMPsce = Seurat::as.SingleCellExperiment(NormDat[[i]])
+TMPsce <- scDblFinder(TMPsce)
+NormDat[[i]]@meta.data$scDblFinder = colData(TMPsce)$scDblFinder.class
+
+NormDat[[i]] = subset(AllDat[[i]],cells = colnames(NormDat[[i]])[which(NormDat[[i]]@meta.data$scDblFinder=='singlet')]) #7894
+CellTracking[i,'AfterDoublets'] = ncol(NormDat[[i]])
+NormDat[[i]] <- SCTransform(NormDat[[i]], verbose = FALSE)
+NormDat[[i]] <- RunPCA(NormDat[[i]], verbose = FALSE)
+NormDat[[i]] <- RunUMAP(NormDat[[i]], dims = 1:50, verbose = FALSE)
+NormDat[[i]] <- FindNeighbors(NormDat[[i]], dims = 1:50, verbose = FALSE)
+NormDat[[i]] <- FindClusters(NormDat[[i]], verbose = FALSE, resolution=0.5)
+
+DefaultAssay(NormDat[[i]]) = 'RNA'
+} #sample end
+
+
+load("/local/projects-t3/idea/mbasu/viralseq/analysis/dayonl/DayonlyIntegrated.rda")
+i="F1"
+meta.x=VTA_adult@meta.data[which(VTA_adult@meta.data$GEM_Well=="Fem1"),]
+cellnm.x=rownames(meta.x)
+cellnm=unlist(lapply(1:length(cellnm.x),function(i)unlist(strsplit(cellnm.x[i],"_"))[1]))
+rownames(meta.x)=cellnm
+NormDat[[i]]@meta.data$Maj_Clust_From_Ref = meta.x[rownames(NormDat[[i]]@meta.data),"CellType"]
+AllDat[[i]]@meta.data$Maj_Clust_From_Ref = meta.x[rownames(AllDat[[i]]@meta.data),"CellType"]
+
+
+i="F2"
+meta.x=VTA_adult@meta.data[which(VTA_adult@meta.data$GEM_Well=="Fem2"),]
+cellnm.x=rownames(meta.x)
+cellnm=unlist(lapply(1:length(cellnm.x),function(i)unlist(strsplit(cellnm.x[i],"_"))[1]))
+rownames(meta.x)=cellnm
+NormDat[[i]]@meta.data$Maj_Clust_From_Ref = meta.x[rownames(NormDat[[i]]@meta.data),"CellType"]
+AllDat[[i]]@meta.data$Maj_Clust_From_Ref = meta.x[rownames(AllDat[[i]]@meta.data),"CellType"]
+
+i="M1"
+meta.x=VTA_adult@meta.data[which(VTA_adult@meta.data$GEM_Well=="Male1"),]
+cellnm.x=rownames(meta.x)
+cellnm=unlist(lapply(1:length(cellnm.x),function(i)unlist(strsplit(cellnm.x[i],"_"))[1]))
+rownames(meta.x)=cellnm
+NormDat[[i]]@meta.data$Maj_Clust_From_Ref = meta.x[rownames(NormDat[[i]]@meta.data),"CellType"]
+AllDat[[i]]@meta.data$Maj_Clust_From_Ref = meta.x[rownames(AllDat[[i]]@meta.data),"CellType"]
+
+
+i="M2"
+meta.x=VTA_adult@meta.data[which(VTA_adult@meta.data$GEM_Well=="Male2"),]
+cellnm.x=rownames(meta.x)
+cellnm=unlist(lapply(1:length(cellnm.x),function(i)unlist(strsplit(cellnm.x[i],"_"))[1]))
+rownames(meta.x)=cellnm
+NormDat[[i]]@meta.data$Maj_Clust_From_Ref = meta.x[rownames(NormDat[[i]]@meta.data),"CellType"]
+AllDat[[i]]@meta.data$Maj_Clust_From_Ref = meta.x[rownames(AllDat[[i]]@meta.data),"CellType"]
+
+
+save(NormDat,CellTracking,file=paste0(analysisDir,"/NormDat.rda"))
+save(AllDat,file=paste0(analysisDir,"/AllDat.rda"))
+
+
+DayNormDat=NormDat
+DayAllDat=AllDat
+
+#fox lab data
+
+library(Seurat)
+library(data.table)
+
+library(BiocGenerics)
+library(SingleCellExperiment)
+library(scDblFinder)
+
+library(ggplot2)
+library(patchwork) #https://patchwork.data-imaginist.com/articles/guides/annotation.html#titles-subtitles-and-captions
+source("/local/projects-t3/idea/mbasu/viralseq/stackedvlnplot.r")
+
+
+dataDir = "/local/projects-t3/idea/mbasu/viralseq/cellrangeroutput/"
+analysisDir="/local/projects-t3/idea/mbasu/viralseq/analysis/merge"
+
+samples=c("IL100165472", "IL100165473", "IL100165474", "IL100165475")
+
+RawDat = vector(mode='list',length=length(samples))
+names(RawDat) = samples
+
+for(i in samples){ print(i);
+RawDat[[i]] <- Read10X(data.dir = paste(dataDir,i,"outs/filtered_feature_bc_matrix",sep="/")) 
+}
+
+save(RawDat,file=paste0(analysisDir,"/RawData.rda"),compress=TRUE)
+
+
+
+CellTracking = data.frame(sample=samples,Raw=0,AfterCutoffs=0,AfterDoublets=0)
+rownames(CellTracking) = samples
+
+AllDat = vector(mode='list',length=length(samples))
+names(AllDat) = samples
+NormDat = vector(mode='list',length=length(samples))
+names(NormDat) = samples
+
+setwd(analysisDir)
+
+sample_list =fread(file=paste0(analysisDir,"/meta.txt"),sep="\t")
+sample_Meta = sample_list[match(samples,sample_list$samples),]
+Name = as.character(sample_Meta$"samples")
+CellTracking[i,'Raw'] = ncol(AllDat[[i]])
+AllDat[[i]]@meta.data$sample=i
+AllDat[[i]]@meta.data$Cre=RawDat[[i]][which(rownames(RawDat[[i]])=="Cre"),]
+AllDat[[i]]@meta.data$CreRev=RawDat[[i]][which(rownames(RawDat[[i]])=="CreRev"),]
+AllDat[[i]]@meta.data$CombCre=AllDat[[i]]@meta.data$Cre+AllDat[[i]]@meta.data$CreRev
+
+if(i == samples[1]){cell=colnames(AllDat[[i]])}
+cell.x=colnames(AllDat[[i]]);
+
+#AllDat[[i]] = RenameCells(AllDat[[i]],new.names=paste(colnames(AllDat[[i]]),i,sep='_')) 
+AllDat[[i]] <- PercentageFeatureSet(AllDat[[i]], pattern = "^mt-", col.name = "percent.mt")
+
+
+MetaInd = match(colnames(AllDat[[i]]),paste(cell,i,sep='_'))
+
+AllDat[[i]]@meta.data$Region = "mouse_VTA"
+AllDat[[i]]@meta.data$Sex = sample_Meta$sex[sample_Meta$samples==i]
+AllDat[[i]]@meta.data$trt = sample_Meta$treatment[sample_Meta$samples==i]
+
+
+
+NormDat[[i]] = subset(AllDat[[i]], subset = nFeature_RNA > 200 & nFeature_RNA < 15000 & nCount_RNA > 500& nCount_RNA < 25000 & percent.mt < 10)
+CellTracking[i,'AfterCutoffs'] = ncol(NormDat[[i]])
+NormDat[[i]] <- SCTransform(NormDat[[i]], verbose = FALSE)
+NormDat[[i]] <- RunPCA(NormDat[[i]], verbose = FALSE)
+NormDat[[i]] <- RunUMAP(NormDat[[i]], dims = 1:50, verbose = FALSE)
+NormDat[[i]] <- FindNeighbors(NormDat[[i]], dims = 1:50, verbose = FALSE)
+NormDat[[i]] <- FindClusters(NormDat[[i]], verbose = FALSE, resolution=0.5)
+
+DefaultAssay(NormDat[[i]]) = 'RNA'
+
+## doublet id and removal -  
+DefaultAssay(NormDat[[i]]) = 'SCT'
+TMPsce = Seurat::as.SingleCellExperiment(NormDat[[i]])
+TMPsce <- scDblFinder(TMPsce)
+NormDat[[i]]@meta.data$scDblFinder = colData(TMPsce)$scDblFinder.class
+
+NormDat[[i]] = subset(AllDat[[i]],cells = colnames(NormDat[[i]])[which(NormDat[[i]]@meta.data$scDblFinder=='singlet')]) #7894
+CellTracking[i,'AfterDoublets'] = ncol(NormDat[[i]])
+NormDat[[i]] <- SCTransform(NormDat[[i]], verbose = FALSE)
+NormDat[[i]] <- RunPCA(NormDat[[i]], verbose = FALSE)
+NormDat[[i]] <- RunUMAP(NormDat[[i]], dims = 1:50, verbose = FALSE)
+NormDat[[i]] <- FindNeighbors(NormDat[[i]], dims = 1:50, verbose = FALSE)
+NormDat[[i]] <- FindClusters(NormDat[[i]], verbose = FALSE, resolution=0.5)
+
+DefaultAssay(NormDat[[i]]) = 'RNA'
+} #sample end
+
+
+save(NormDat,CellTracking,file=paste0(analysisDir,"/NormDat.rda"))
+save(AllDat,file=paste0(analysisDir,"/AllDat.rda"))
+
+
+load("/local/projects-t3/idea/mbasu/viralseq/analysis/merge/NormDat.rda")
+
+CombDat = c(NormDat,DayNormDat)
+
+for (i in names(CombDat)) {
+  CombDat[[i]]=UpdateSeuratObject(CombDat[[i]])
+    CombDat[[i]] <- NormalizeData(CombDat[[i]], verbose = FALSE)
+    CombDat[[i]] <- FindVariableFeatures(CombDat[[i]], selection.method = "vst", nfeatures = 2000, verbose = FALSE)
+}
+
+features <- SelectIntegrationFeatures(object.list = CombDat)
+
+CombDat <- lapply(X = CombDat, FUN = function(x) {
+    x <- ScaleData(x, features = features, verbose = FALSE)
+    x <- RunPCA(x, features = features, verbose = FALSE)
+})
+
+options(future.globals.maxSize = 550000 * 1024^2)
+
+All.anchors <- FindIntegrationAnchors(object.list = CombDat, anchor.features = features, reduction = "rpca",reference=NULL) #v4? 
+
+save(All.anchors,file=paste0(analysisDir,"/anchors_1.rda"),compress=TRUE)
+
+All.integrated <- IntegrateData(anchorset = All.anchors)
+DefaultAssay(All.integrated) <- "integrated"
+All.integrated <- ScaleData(All.integrated, verbose = FALSE)
+All.integrated <- RunPCA(All.integrated, npcs = 30, verbose = FALSE)
+All.integrated <- RunUMAP(All.integrated, reduction = "pca", dims = 1:30)
+
+All.integrated <- FindNeighbors(All.integrated, dims = 1:30, verbose = FALSE)
+All.integrated <- FindClusters(All.integrated, verbose = FALSE, resolution=0.5)
+
+x=as.factor(as.numeric(All.integrated@meta.data$integrated_snn_res.0.5))
+All.integrated@meta.data$integrated_snn_res.0.5=x
+
+save(All.integrated,file=paste0(analysisDir,"/AllIntegrated_1.rda"),compress=TRUE)
+
+load(paste0(analysisDir,"/AllIntegrated_1.rda"))
+
+obj=All.integrated
+Idents(obj)="integrated_snn_res.0.5"
+obj <- FindClusters(obj, verbose = FALSE, resolution=0.2)
+
+pdf(file=paste(analysisDir,"/clustering.pdf",sep=''),width=15,height=12)
+Idents(obj)="integrated_snn_res.0.5"
+DimPlot(obj, reduction = "umap",  label = TRUE, repel = TRUE,label.size = 5)+ggtitle("resolution=0.5")
+dev.off()
+
+
+plottype="umap"
+pdf(file=paste(analysisDir,"/QCplot",plottype,".pdf",sep=''),width=18,height=24)
+
+for(res in c(0.5)){ print(res)
+Idents(obj)=paste0("integrated_snn_res.",res)
+p1=FeaturePlot(obj, features = c("nFeature_RNA","nCount_RNA","percent.mt"), ncol=3,pt.size = 0.2, reduction = plottype)
+p3=VlnPlot(obj, features = c("nFeature_RNA","nCount_RNA","percent.mt"), pt.size = 0.15,ncol=3)
+
+patchwork <- p1/p3
+print(patchwork + plot_annotation(
+  title = paste0('The QC plots for resolution=',res),
+  subtitle = '',
+  caption = 'Disclaimer: QC looks good'
+))
+
+}
+dev.off()
+genes=c("Slc32a1","Gad1", "Gad2","Oprm1","Htr2c","Grm2","Pnoc","Th","Slc18a2","Drd2","Slc6a3")
+pdf(file=paste(analysisDir,"/celltype_vlnplot.pdf",sep=''),width=24,height=18)
+for(res in c(0.5)){ print(res)
+Idents(All.integrated)=paste0("integrated_snn_res.",res)
+print(VlnPlot(All.integrated, features = genes, pt.size = 0.2,ncol=4,assay="RNA")+ theme(legend.position = 'none'))
+}
+dev.off()
+
+genes=c("Slc32a1","Gad1", "Gad2","Oprm1","Htr2c","Grm2","Pnoc","Th","Slc18a2","Drd2","Slc6a3")
+
+pdf(file=paste(analysisDir,"/celltype_neuron_stackedvlnplot.pdf",sep=''),width=10,height=18)
+for(res in c(0.5)){ print(res)
+Idents(All.integrated)=paste0("integrated_snn_res.",res)
+print(StackedVlnPlot(obj = All.integrated, features = genes, assay="RNA"))
+}
+dev.off()
+
+pdf(file=paste(analysisDir,"/celltype_nonneuron_stackedvlnplot.pdf",sep=''),width=12,height=15)
+for(res in c(0.5)){ print(res)
+
+Idents(All.integrated)=paste0("integrated_snn_res.",res)
+#VlnPlot(mergeobj, features = c("Eng","Pdgfra","Pdgfrb","Dock6","Hist1h2an","Mobp","Arhgap15","Aqp4"), pt.size = 0.2,ncol=3,assay="RNA")
+print(StackedVlnPlot(obj = All.integrated, features = c("Eng","Pdgfra","Pdgfrb","Dock6","Hist1h2an","Mobp","Arhgap15","Aqp4"),assay="RNA"))
+}
+dev.off()
+
+
+plottype="umap"
+pdf(file=paste(analysisDir,paste0("/celltype_neuron_featureplot_",plottype,".pdf"),sep=''),width=22,height=20)
+FeaturePlot(All.integrated, features = genes, pt.size = 0.5,ncol=4,reduction = plottype,order=TRUE)
+dev.off()
+
+
+pdf(file=paste(analysisDir,paste0("/celltype_nonneuron_featureplot_",plottype,".pdf"),sep=''),width=20,height=15)
+FeaturePlot(All.integrated, features = c("Eng","Pdgfra","Pdgfrb","Dock6","Hist1h2an","Mobp","Arhgap15","Aqp4"), pt.size = 0.5,ncol=4,reduction = plottype,order=TRUE)
+dev.off()
+
+
+x=obj@meta.data$Region
+x[x=="mouse_VTA"]="Meg"
+x[x=="rat_VTA"]="Day"
+obj@meta.data$dataset=x
+
+plottype="umap"
+Idents(obj)="dataset"
+pdf(file=paste(analysisDir,paste0("/dataset_",plottype,".pdf"),sep=''),width=20,height=15)
+
+DimPlot(obj, pt.size = 0.5,ncol=4,reduction = plottype,order=TRUE,cols=c("#00BFC4","#F8766D"))
+DimPlot(obj, pt.size = 0.5,ncol=4,reduction = plottype,split.by ="dataset",cols=c("#00BFC4","#F8766D"))
+BarPlot(obj,group.by="dataset",category="integrated_snn_res.0.5")
+dev.off()
+
+t(table(obj@meta.data$dataset,obj@meta.data$integrated_snn_res.0.5))
+             0    1    2    3    4    5    6    7    8    9   10   11   12   13
+  Day\n\n 3700 3037 2427  232 1534 1642 1508 1022  737  763  800  337  650  400
+  Meg      843  727  169 1918  407   98  231  367  423  296  139  533  216  248
+         
+            14   15   16   17   18   19   20   21   22   23   24   25   26
+  Day\n\n  383  377  258  201  185  126  104   26   69   25   59   25   21
+  Meg      135  127   23   43    6   45   31   96   18   43    4   23    2
+
+
+
+#Markers
+Majormarkersfinding<-function(){
+obj=All.integrated
+Idents(obj)="integrated_snn_res.0.5"
+types=as.numeric(levels(obj@meta.data$integrated_snn_res.0.5))
+  DefaultAssay( obj ) = 'RNA'
+  markers=list()
+for(i in types){ cat(paste(i,', ',sep=''))
+  out = FindMarkers( obj , assay = 'RNA' ,  ident.1 = i , ident.2 = NULL , logfc.threshold = 0 )
+  markers[[i]] = out
+}
+save(markers,file=paste0(analysisDir,"/Marker_celltype_res0.5.rda"),compress=TRUE)
+
+names(markers)=types
+deg.all = do.call( rbind , markers )
+deg.all = deg.all[ order( deg.all$p_val ) , ]
+write.table(deg.all,file=paste0(analysisDir,"/Marker_res0.5.txt"),sep="\t")
+}
+
+#=================================
+#Reclustering neurons
+#================================
+load("/local/projects-t3/idea/mbasu/viralseq/analysis/day/AllDat.rda")
+DayAllDat=AllDat
+
+#load meg data
+load("/local/projects-t3/idea/mbasu/viralseq/analysis/merge/AllDat.rda")
+MegAllDat=AllDat
+
+load(paste0(analysisDir,"/AllIntegrated_1.rda"))
+obj=All.integrated
+
+
+for(i in 1:length(MegAllDat)){k=i
+  tmpcells.x = intersect(paste0(colnames(MegAllDat[[i]]),"_",k),rownames(obj@meta.data)[which(obj$integrated_snn_res.0.5 %in% c("5","9","11","13","14","15","16","18","19","20","24","26") )])
+  tmpcells =unlist(lapply(1:length(tmpcells.x),function(x){unlist(strsplit(tmpcells.x[x],"_"))[1]}))
+  MegAllDat[[i]]=subset(MegAllDat[[i]],cells=tmpcells)
+  print(c(k,length(tmpcells)))
+}
+
+for(i in 1:length(DayAllDat)){k=4+i
+  tmpcells.x = intersect(paste0(colnames(DayAllDat[[i]]),"_",k),rownames(obj@meta.data)[which(obj@meta.data$integrated_snn_res.0.5 %in% c("5","9","11","13","14","15","16","18","19","20","24","26") )])
+  tmpcells =unlist(lapply(1:length(tmpcells.x),function(x){unlist(strsplit(tmpcells.x[x],"_"))[1]}))
+  DayAllDat[[i]]=subset(DayAllDat[[i]],cells=tmpcells)
+  print(c(k,length(tmpcells)))
+  
+}
+
+CombDat = c(MegAllDat,DayAllDat)
+
+for (i in names(CombDat)) {
+  #CombDat[[i]]=UpdateSeuratObject(CombDat[[i]])
+  CombDat[[i]] <- NormalizeData(CombDat[[i]], verbose = FALSE)
+  CombDat[[i]] <- FindVariableFeatures(CombDat[[i]], selection.method = "vst", nfeatures = 2000, verbose = FALSE)
+}
+
+features <- SelectIntegrationFeatures(object.list = CombDat)
+
+CombDat <- lapply(X = CombDat, FUN = function(x) {
+  x <- ScaleData(x, features = features, verbose = FALSE)
+  x <- RunPCA(x, features = features, verbose = FALSE)
+})
+
+options(future.globals.maxSize = 550000 * 1024^2)
+
+All.anchors <- FindIntegrationAnchors(object.list = CombDat, anchor.features = features, reduction = "rpca",reference=NULL) #v4? 
+
+save(All.anchors,file=paste0(analysisDir,"/anchors_1.rda"),compress=TRUE)
+
+neuron.integrated <- IntegrateData(anchorset = All.anchors)
+DefaultAssay(neuron.integrated) <- "integrated"
+neuron.integrated <- ScaleData(neuron.integrated, verbose = FALSE)
+neuron.integrated <- RunPCA(neuron.integrated, npcs = 30, verbose = FALSE)
+neuron.integrated <- RunUMAP(neuron.integrated, reduction = "pca", dims = 1:30)
+neuron.integrated <- RunTSNE(neuron.integrated, reduction = "pca", dims = 1:30)
+
+neuron.integrated <- FindNeighbors(neuron.integrated, dims = 1:30, verbose = FALSE)
+neuron.integrated <- FindClusters(neuron.integrated, verbose = FALSE, resolution=c(0.1,0.2,0.5))
+
+x=as.factor(as.numeric(neuron.integrated@meta.data$integrated_snn_res.0.5))
+neuron.integrated@meta.data$integrated_snn_res.0.5=x
+
+neuron.integrated@meta.data$Majclus=obj@meta.data[colnames(neuron.integrated),"integrated_snn_res.0.5"]
+
+save(neuron.integrated,file=paste0(analysisDir,"/NeuronIntegrated.rda"),compress=TRUE)
+
+objN=neuron.integrated
+pdf(paste0(analysisDir,"/neuron_sub_0.1_0.2_0.5.pdf"),width=10,height=8)
+Idents(objN)="Majclus"
+DimPlot(objN, reduction = "umap", label = T) +ggtitle("Major cluster resolution=0.5")
+dev.off()
+types=c("16","18","5","11","20","26","13","9","14","15","19","24")
+for(i in types) {cat(paste(i,', ', sep=''))
+ out=FindMarkers(neuron.integrated, assay ='RNA', ident.1 = i, ident.2 = NULL, logfc.threshold=0)
+markers[[i]] = out
+}
+save(markers, file=paste0("Markers_neuronintegratedMajClus.rda"),compress=TRUE)
+names(markers)=types
+deg.alal=do.call(rbind,markers)
+deg.alal=deg.alal[order(deg.alal$p_val) , ]
+write.table(deg.alal,file=paste0("marker_neuronintegratedMajClus.txt",sep="\t")
+
+
+
+###subset the mouse data 
+
+Idents(neuron.integrated) <-"Region"
+mousesubset<-subset(neuron.integrated, idents=c("mouse_VTA"))
+Idents(mousesubset) <-“Majclus”
+
+table(mousesubset@meta.data$Majclus)
+
+  1   2   3   4   5   6   7   8   9  10  11  12  13  14  15  16  17  18  19  20  21  22  23  24  25  26  27 
+  0   0   0   0 407   0   0   0 423   0 139   0 216 248 135 127   0  43   6  45   0   0   0  43   0  23   0
+
+## DE with Libra
+Library(Libra)
+DE=run_de(mousesubset, replicate_col="sample", cell_type_col = "Majclus", label_col= "trt")
+save(DE,file=paste("LibraDE_MouseRatclusters.rda"),compress=TRUE)
+
+## write CSV with p unadj <05 DEGs in the neuron clusters 
+Cluster5Genes<-subset(DE,cell_type==5, p_val <=0.05)
+write.table(Cluster5Genes,file="Cluster5_pseudobulk_punadj05.csv",quote=FALSE,row.names=FALSE,sep=",")
+Cluster9Genes<-subset(DE,cell_type==9, p_val <=0.05)
+write.table(Cluster9Genes,file="Cluster9_pseudobulk_punadj05.csv",quote=FALSE,row.names=FALSE,sep=",")
+Cluster11Genes <-subset(DE, cell_type==11, p_val <=0.05)
+write.table(Cluster11Genes,file="Cluster11_pseudobulk_punadj05.csv",quote=FALSE,row.names=FALSE,sep=",")
+Cluster13Genes<-subset(DE,cell_type==13, p_val <=0.05)
+write.table(Cluster13Genes,file="Cluster13_pseudobulk_punadj05.csv",quote=FALSE,row.names=FALSE,sep=",")
+Cluster14Genes<-subset(DE,cell_type==14, p_val <=0.05)
+write.table(Cluster14Genes,file="Cluster14_pseudobulk_punadj05.csv",quote=FALSE,row.names=FALSE,sep=",")
+Cluster15Genes<-subset(DE,cell_type==15, p_val <=0.05)
+write.table(Cluster15Genes,file="Cluster15_pseudobulk_punadj05.csv",quote=FALSE,row.names=FALSE,sep=",")
+Cluster16Genes<-subset(DE,cell_type==16, p_val <=0.05)
+write.table(Cluster16Genes,file="Cluster16_pseudobulk_punadj05.csv",quote=FALSE,row.names=FALSE,sep=",")
+Cluster18Genes<-subset(DE,cell_type==18, p_val <=0.05)
+write.table(Cluster18Genes,file="Cluster18_pseudobulk_punadj05.csv",quote=FALSE,row.names=FALSE,sep=",")
+Cluster19Genes<-subset(DE,cell_type==19, p_val <=0.05)
+write.table(Cluster19Genes,file="Cluster19_pseudobulk_punadj05.csv",quote=FALSE,row.names=FALSE,sep=",")
+Cluster20Genes<-subset(DE,cell_type==20, p_val <=0.05)
+write.table(Cluster20Genes,file="Cluster20_pseudobulk_punadj05.csv",quote=FALSE,row.names=FALSE,sep=",")
+Cluster_24Genes<-subset(DE,cell_type==24, p_val <=0.05)
+write.table(Cluster_24Genes,file="Cluster24_pseudobulk_punadj05.csv",quote=FALSE, row.names=FALSE,sep= ",")
+Cluster26Genes<-subset(DE,cell_type==26, p_val <=0.05)
+write.table(Cluster26Genes,file="Cluster26_pseudobulk_punadj05.csv",quote=FALSE,row.names=FALSE,sep=",")
+
+##volcano plots for selected clusters
+ de <-subset(DE, cell_type =="16")
+de$diffexpressed <- "NO"
+ de$diffexpressed[de$avg_logFC > 0.6 & de$p_val < 0.05] <- "UP"
+de$diffexpressed[de$avg_logFC < -0.6 & de$p_val < 0.05] <- "DOWN"
+de$delabel <- NA
+de$delabel[de$diffexpressed != "NO"] <- de$gene[de$diffexpressed != "NO"]
+pdf(file="cluster16volcano.pdf")
+ggplot(data=de, aes(x=avg_logFC, y= -log10(p_val), col=diffexpressed,label=delabel)) + geom_point() + theme_minimal() + geom_text_repel()
+dev.off()
+
+de <-subset(DE, cell_type =="18")
+de$diffexpressed <- "NO"
+ de$diffexpressed[de$avg_logFC > 0.6 & de$p_val < 0.05] <- "UP"
+de$diffexpressed[de$avg_logFC < -0.6 & de$p_val < 0.05] <- "DOWN"
+de$delabel <- NA
+de$delabel[de$diffexpressed != "NO"] <- de$gene[de$diffexpressed != "NO"]
+pdf(file="cluster18volcano.pdf")
+ggplot(data=de, aes(x=avg_logFC, y= -log10(p_val), col=diffexpressed,label=delabel)) + geom_point() + theme_minimal() + geom_text_repel()
+dev.off()
+
+## import data from Townsend 
+femaleratvta<-read.csv("female_vta_rat.csv")
+femaleratvta <-as.data.frame(femaleratvta)
+maleratvta <-read.csv("male_vta_rat.csv")
+maleratvta<-as.data.frame(maleratvta)
+maleratvta$sex <- c("male")
+femaleratvta$sex <-c("female")
+colnames(femaleratvta)<- c("ID","log_FC","p_val", "p_adj","gene","sex")
+colnames(maleratvta)<- c("ID","log_FC","p_val", "p_adj","gene","sex")
+maleratvta <-subset(maleratvta, maleratvta$p_val < 0.05)
+femaleratvta <-subset(femaleratvta, femaleratvta$p_val < 0.05)
+
+#merge with mouse fentanyl data 
+DE_punadj <-subset(DE, p_val <0.05)
+mergeddf <- inner_join(DE_punadj, ratfentanyldata, by = "gene")
+
+mergeddf$mouse <- "null"
+mergeddf$mouse[mergeddf$avg_logFC < 0] <- "DOWN"
+mergeddf$mouse[mergeddf$avg_logFC > 0] <- "UP"
+mergeddf$rat <- "null"
+mergeddf$rat[mergeddf$log_FC < 0] <-"DOWN"
+mergeddf$rat[mergeddf$log_FC > 0] <-"UP"
+mergeddf$mouse <- "null"
+mergeddf$mouse[mergeddf$avg_logFC < 0] <- "DOWN"
+mergeddf$mouse[mergeddf$avg_logFC > 0] <- "UP"
+mergeddf$rat <- "null"
+mergeddf$rat[mergeddf$log_FC < 0] <-"DOWN"
+mergeddf$rat[mergeddf$log_FC > 0] <-"UP"
+
+upup <-subset(mergeddf, mergeddf$mouse == "UP" & mergeddf$rat == "UP")
+downdown <-subset(mergeddf, mergeddf$mouse == "DOWN" & mergeddf$rat == "DOWN")
+write.table(downdown, "mouseandratdown.csv", sep=",")
+write.table(upup, "mouseandratup.csv", sep=",")
+
+# VennDiagram 
+library(VennDiagram)
+
+
+# Create separate sets based on different conditions
+gene_set_UP_mouse <- mergeddf$gene[mergeddf$mouse == "UP"]
+gene_set_UP_rat <- mergeddf$gene[mergeddf$rat == "UP"]
+gene_set_DOWN_mouse <- mergeddf$gene[mergeddf$mouse == "DOWN"]
+gene_set_DOWN_rat <- mergeddf$gene[mergeddf$rat == "DOWN"]
+
+# Combine the sets into a list
+gene_sets <- list(
+  UP_mouse = gene_set_UP_mouse,
+  UP_rat = gene_set_UP_rat,
+  DOWN_mouse = gene_set_DOWN_mouse,
+  DOWN_rat = gene_set_DOWN_rat
+)
+
+# Create a Venn diagram
+venn_result <- venn.diagram(
+  x = gene_sets,
+  category.names = c("UP_mouse", "UP_rat", "DOWN_mouse", "DOWN_rat"),
+  filename = NULL
+)
+
+# Display the Venn diagram
+grid.draw(venn_result)
